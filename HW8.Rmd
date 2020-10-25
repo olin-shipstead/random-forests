@@ -1,0 +1,321 @@
+---
+title: "HW8"
+author: "Olin Shipstead"
+date: "April 11, 2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#setwd("HW8/")
+#?knitr::opts_chunk
+```
+
+# Question 1
+
+>*1) This is a problem involving trying to predict the usage of mobile phones by individuals based on their income, age, education and marital status. Each of the attributes has been categorized into 2 or 3 types. The training data "Mobile Phone Use Data.csv" set is located in (Data Archive > Decision Trees). Create a decision tree from this data. Interpret your results*
+
+First, I import the training mobile phone data as train and take a peek at the data using the head command:
+
+```{r cars}
+train <- read.csv("Mobile Phone Use Data.csv")
+head(train)
+
+```
+
+I see that the training data contains 15 observations of 5 variables -- four predictors (Income, Age, Education, and Marital Status) and one response (Usage). All of these variablea are cateogrical variables written as factors with either two or three levels. I will fit a decision tree model to the data to determine which predictors are most important in determining cell phone usage:
+
+```{r}
+library(tree)
+
+d.tree <- tree(Usage~., data=train)
+summary(d.tree)
+```
+
+After importing the tree package, the tree function is called according to the formula and data at hand. The summary function allows for a peek at the decision tree model built. Despite the model having access to four predictors, it only used two to grow the decision tree: Education and Income. These two predictors split the data into three terminal nodes, each represented by a level of Usage. The misclassification error rate is 13.3%, which is modest, though substantial for a classification problem of this small size. 
+
+The results of the decision tree analysis can be plotted as shown below:
+
+```{r}
+plot(d.tree)
+text(d.tree, pretty=F)
+
+```
+
+Here, we see the visualizaation of the decision tree. There are conditions where branches diverge; if those conditions are true, then the left branch is followed, and if they are false, then the right branch is followed. We see that the strongest predictor of Usage is Education, as it is highest in the tree and it correctly identifies all of the Medium Usage observations as College-educated. If not college educated (University of High School), then the most important predictor is Income. High and Medium Income observations lead to High phone Usage, while Low Income observations lead to Low phone Usage. 
+
+That being said, two (or 13.3% of) observations are misidentified in this decision tree. This misclassification error rate could be problematic when analyzing larger data sets or when testing the model on a test set. 
+
+
+# Question 2
+
+> *The data set wine.csv (in Data Archive > Random Forests) contains the following variables: fixed.acidity, volatile.acidity, citric.acid, residual.sugar, chlorides, free.sulfur.dioxide, total.sulfur.dioxide, density, pH, sulphates, alcohol (percent), and quality (a subjective ranking from 3 to 9). Classify all wines into bad, normal or good, depending on whether their quality is less than, equal to, or greater than 6 respectively, e.g., create a new derived variable "taste" that has three categories - bad, normal or good. Construct training and test data sets, with relative partition sizes of 60% and 40%. Now tune (using caret) a Random Forests model to find that model that best predicts taste on the test data set, given the other variables as predictors (remember to delete quality). Display a confusion matrix for your results.*
+
+I will begin by taking a peek at the data:
+
+```{r}
+wine <- read.csv("wine.csv")
+head(wine) # 4898 x 12
+```
+
+The predictor class, Quality, is currently defined as a numeric between 3 and 9. I will redefine the variable into a qualitative, categorical variable with Bad being between 3 and 6, Normal being 6, and Good being between 6 and 9. I call this response variable taste and use it to replace the original quality predictor. I then break the data into testing and training data according to a 60/40 split and call the randomForest function using the training set:
+
+```{r}
+library(randomForest)
+
+taste <- ifelse(wine$quality < 6,"Bad",ifelse(wine$quality == 6, "Normal","Good"))
+taste <- factor(taste, levels = c("Bad","Normal","Good"))
+
+wine <- data.frame(wine[,1:11],taste) # replacing quality with taste
+ 
+set.seed(4)
+sel <- sample(nrow(wine),nrow(wine)*0.6) # create seleciton for training set
+
+rf <- randomForest(taste~., data=wine, subset=sel, importance=T)
+rf
+```
+
+As shown above, the initial random forest model using 3 predictor variables at a time (as the default) produced an out-of-bag error rate of 29.61%. The question specifies comparing random forest models using the test data set, so the performance of the initial model on the test set is shown below:
+
+```{r}
+pred <- predict(rf, newdata = wine[-sel,])
+table(pred, taste[-sel])
+sum(pred != taste[-sel])/length(pred)
+
+```
+
+This shows us that the initial random forest model has a 31.94% error rate for the test data. We will seek to reduce this test data classification error via the caret package. We can perform random forest tuning using the caret package as shown below:
+
+
+```{r}
+
+library(caret)
+
+RF <- train(taste~., 
+            data=wine, 
+            subset=sel,
+            method="rf",
+            trControl=trainControl(method="cv",number=5),
+            tuneGrid=expand.grid(mtry=seq(1,11,2)))
+
+RF
+
+```
+
+Testing values of mtry from 1 to 11 by 2 (to save on computing time), I see that the model that the best value of mtry was 1, since this value returned the largest classification accuracy. I can print the results of the final, mtry=1 model below and display its results on the testing data:
+
+```{r}
+
+RF$finalModel
+tuned_pred <- predict(RF$finalModel, newdata=wine[-sel,])
+table(tuned_pred, taste[-sel])
+sum(tuned_pred != taste[-sel])/length(pred) 
+
+```
+
+We first see that the random forest model produces an out-of-bag error rate of 28.25%, which is less than the initial OOB error rate of 29.61%. The confusion matrix for the OOB samples is shown above, while the confusion matrix for the testing data is shown below. Finally, we see that the testing data misclassification error rate for the tuned model is 31.17%, which is slightly less than the initial random forest. Overall, the random forest model tuned via the caret package performed better on the out-of-bag training data and the testing data than the initial random forest model. 
+
+
+
+# Question 3
+
+> *Use again the data from question 2, but this time classify all wines into two classes, bad and good (bad = quality 3 to 5; good = quality 6 to 9). Tune a Random forests model for best test data set prediction performance. Display your results using Receiving Operating Characteristics and Cost curves.*
+
+This problem involves (1) reclassifying the wine data into two response classes, (2) tuning a random forest model for best performance on the test data, and (3) visualizing the results through an ROC curve and a Cost curve. Borrowing from Question 2, the code for Step 1 is shown below:
+
+```{r}
+
+wine <- read.csv("wine.csv") 
+taste <- ifelse(wine$quality < 6,"Bad","Good")
+taste <- factor(taste, levels = c("Bad","Good"))
+
+wine <- data.frame(wine[,1:11],taste) # replacing quality with taste
+```
+
+Thus the quality variable has been replaced with a taste variable in the form of a factor with two levels: Bad (if quality is less than 6) and Good (if quality is 6 or greater). We then begin the random forest tuning in Step 2 below:
+
+```{r}
+
+library(randomForest)
+set.seed(5)
+sel <- sample(nrow(wine),nrow(wine)*0.6) # create seleciton for training set
+
+RF2 <- train(taste~., 
+            data=wine, 
+            subset=sel,
+            method="rf",
+            trControl=trainControl(method="cv",number=5),
+            tuneGrid=expand.grid(mtry=seq(1,11,2)))
+
+RF2$finalModel
+tuned_pred <- predict(RF2$finalModel, newdata=wine[-sel,])
+table(tuned_pred, taste[-sel])
+sum(tuned_pred != taste[-sel])/length(tuned_pred) 
+
+```
+
+Using the same caret tuning technique as from Question 2, the best model specifies an mtry value of 1. The OOB error rate and the testing data error rate of this model are 17.87% and 18.06%, respectively. The confusion matrix for the OOB sample data (above) and the testing data (below) are both displayed. It follows intuition that the error rates have decreased when the number of response classes have decreased, since there are fewer ways the model can get the prediction wrong. 
+
+To complete Step 3, I will utilize the rattle package to read in the wine data set, grow a random forest using mtry=1, and plot the results on an ROC curve and a cost curve. The code below has been adapted from the rattle's log to produce the plots (after loaded and calling rattle):
+
+
+```{r}
+
+# Rattle log begins here
+library(rattle)
+library(magrittr)
+crs$dataset <- wine
+crs$input     <- c("fixed.acidity", "volatile.acidity",
+                   "citric.acid", "residual.sugar", "chlorides",
+                   "free.sulfur.dioxide", "total.sulfur.dioxide",
+                   "density", "pH", "sulphates", "alcohol")
+crs$numeric   <- c("fixed.acidity", "volatile.acidity",
+                   "citric.acid", "residual.sugar", "chlorides",
+                   "free.sulfur.dioxide", "total.sulfur.dioxide",
+                   "density", "pH", "sulphates", "alcohol")
+crs$target    <- "taste"
+
+set.seed(593824)
+crs$nobs <- nrow(crs$dataset)
+crs$train <- sample(crs$nobs, 0.6*crs$nobs)
+crs$validate <- NULL
+
+crs$nobs %>%
+  seq_len() %>%
+  setdiff(crs$train) %>%
+  setdiff(crs$validate) ->
+crs$test
+
+crs$rf <- randomForest::randomForest(taste ~ .,
+  data=crs$dataset[crs$train, c(crs$input, crs$target)], 
+  ntree=500,
+  mtry=1,
+  importance=TRUE,
+  na.action=randomForest::na.roughfix,
+  replace=FALSE)
+
+
+#=======================================================================
+# Rattle timestamp: 2020-04-12 16:08:14 x86_64-w64-mingw32 
+
+# Evaluate model performance on the testing dataset. 
+
+# ROC Curve: requires the ROCR package.
+
+library(ROCR)
+
+# ROC Curve: requires the ggplot2 package.
+
+library(ggplot2, quietly=TRUE)
+
+# Generate an ROC Curve for the rf model on wine [test].
+
+crs$pr <- predict(crs$rf, newdata=na.omit(crs$dataset[crs$test, c(crs$input, crs$target)]),
+    type    = "prob")[,2]
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(crs$dataset[crs$test, c(crs$input, crs$target)])$taste)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(crs$pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(crs$pr, no.miss)
+}
+
+pe <- performance(pred, "tpr", "fpr")
+au <- performance(pred, "auc")@y.values[[1]]
+pd <- data.frame(fpr=unlist(pe@x.values), tpr=unlist(pe@y.values))
+p <- ggplot(pd, aes(x=fpr, y=tpr))
+p <- p + geom_line(colour="red")
+p <- p + xlab("False Positive Rate") + ylab("True Positive Rate")
+p <- p + ggtitle("ROC Curve Random Forest wine [test] taste")
+p <- p + theme(plot.title=element_text(size=10))
+p <- p + geom_line(data=data.frame(), aes(x=c(0,1), y=c(0,1)), colour="grey")
+p <- p + annotate("text", x=0.50, y=0.00, hjust=0, vjust=0, size=5,
+                   label=paste("AUC =", round(au, 2)))
+print(p)
+
+# Calculate the area under the curve for the plot.
+
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(crs$dataset[crs$test, c(crs$input, crs$target)])$taste)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(crs$pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(crs$pr, no.miss)
+}
+performance(pred, "auc")
+
+
+
+#=======================================================================
+# Rattle timestamp: 2020-04-12 16:08:38 x86_64-w64-mingw32 
+
+# Evaluate model performance on the testing dataset. 
+
+# Cost Curve: requires the ROCR package.
+
+library(ROCR)
+
+# Generate a Cost Curve for the Random Forest model on wine [test].
+
+crs$pr <- predict(crs$rf, newdata=na.omit(crs$dataset[crs$test, c(crs$input, crs$target)]),
+    type    = "prob")[,2]
+plot(0, 0, xlim=c(0, 1), ylim=c(0, 1), xlab="Probability cost function", ylab="Normalized expected cost")
+lines(c(0,1),c(0,1))
+lines(c(0,1),c(1,0))
+
+# Remove observations with missing target.
+
+no.miss   <- na.omit(na.omit(crs$dataset[crs$test, c(crs$input, crs$target)])$taste)
+miss.list <- attr(no.miss, "na.action")
+attributes(no.miss) <- NULL
+
+if (length(miss.list))
+{
+  pred <- prediction(crs$pr[-miss.list], no.miss)
+} else
+{
+  pred <- prediction(crs$pr, no.miss)
+}
+perf1 <- performance(pred, "fpr", "fnr")
+for (i in seq_along(perf1@x.values))
+{
+	for (j in seq_along(perf1@x.values[[i]]))
+	{
+		lines(c(0,1),c(perf1@y.values[[i]][j],
+				perf1@x.values[[i]][j]),
+				col=terrain.colors(10)[i],lty=3)
+	}
+}
+perf<-performance(pred, "ecost")
+
+# Bug in ROCR 1.0-3 does not obey the add command.
+# Calling the function directly does work.
+
+.plot.performance(perf, lwd=1.5, xlim=c(0,1), ylim=c(0,1), add=T)
+op <- par(xpd=TRUE)
+text(0, 1.07, "FPR")
+text(1, 1.07, "FNR")
+par(op)
+text(0.12, 1, "Predict +ve")
+text(0.88, 1, "Predict -ve")
+title(main="Cost Curve Random Forest wine [test]",
+    sub=paste("Rattle", format(Sys.time(), "%Y-%b-%d %H:%M:%S"), Sys.info()["user"]))
+
+```
+
+These plots are visualizations that allow for the evaluation of model performance. The ROC plot records the model's performance according to its false positive rate and its true positive rate for different discrimination thresholds. In an ROC curve, the goal is to maximize the area under the curve to 1. This plot shows that the area under the curve (AUC) is approximately 0.89, which is encouraging towards the random forest model with mtry=1. The cost curve is created from compiling lines on the error rate vs probability cost axes, and the goal is to minimize the area in the lower envelope. While the rattle function does not provide an estimate for the area under the green section, the plot shows that it is quite small in reference to the lower triangular area. This is also encouraging towards the performance of the tuned random forest model. 
+
